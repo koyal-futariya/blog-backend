@@ -17,6 +17,7 @@ const allowedOrigins = [
   "https://www.connectingdotserp.com",
   "https://blog.connectingdotserp.com",
   "https://www.blog.connectingdotserp.com",
+  "https://koyal-dun.vercel.app",
   "http://localhost:3000",
   "http://localhost:5002",
 ];
