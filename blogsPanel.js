@@ -18,7 +18,7 @@ const allowedOrigins = [
   "https://blog.connectingdotserp.com",
   "https://www.blog.connectingdotserp.com",
   "https://subdomain-x26r.vercel.app",
-  "https://koyal-dun.vercel.app",
+  "https://domain-topaz.vercel.app",
   "http://localhost:3000",
   "http://localhost:5002",
 ];
