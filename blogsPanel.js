@@ -8,7 +8,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
-
 const app = express();
 
 // Allowed Origins for CORS
@@ -20,6 +19,7 @@ const allowedOrigins = [
   "https://subdomain-x26r.vercel.app",
   "https://domain-topaz.vercel.app",
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:5002",
 ];
 
@@ -114,7 +114,6 @@ userSchema.index({ email: 1 }, { unique: true, sparse: true });
 // Pre-save hook to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
-  
   try {
     this.password = await bcrypt.hash(this.password, 12);
     next();
@@ -150,7 +149,7 @@ userSchema.virtual('profile').get(function() {
 
 const User = mongoose.model("User", userSchema);
 
-// ✅ Blog Schema & Model (EXACTLY as you had it)
+// ✅ UPDATED Blog Schema & Model WITH TAGS SUPPORT
 const blogSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
@@ -177,29 +176,41 @@ const blogSchema = new mongoose.Schema(
       enum: ["Trending", "Featured", "Editor's Pick", "Recommended", "None"],
       default: "None",
     },
+    // 🆕 ADDED TAGS FIELD
+    tags: { 
+      type: [String], 
+      default: [],
+      validate: {
+        validator: function(tags) {
+          return tags.length <= 10; // Limit to 10 tags
+        },
+        message: 'Cannot have more than 10 tags'
+      }
+    }
   },
   { timestamps: true }
 );
 
+// 🆕 Add index for tags for better search performance
+blogSchema.index({ tags: 1 });
+
 const Blog = mongoose.model("Blog", blogSchema);
 
-// ✅ Configure Cloudinary (EXACTLY as you had it)
+// ✅ Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ Helper function to extract public_id from Cloudinary URL (EXACTLY as you had it)
+// ✅ Helper function to extract public_id from Cloudinary URL
 const getPublicIdFromUrl = (url) => {
   if (!url) return null;
-
   try {
     const urlParts = url.split("/");
     const versionIndex = urlParts.findIndex(
       (part) => part.startsWith("v") && !isNaN(part.substring(1))
     );
-
     if (versionIndex !== -1 && urlParts.length > versionIndex + 2) {
       const relevantParts = urlParts.slice(versionIndex + 1);
       const publicIdWithExtension = relevantParts.slice(1).join("/");
@@ -224,10 +235,9 @@ const getPublicIdFromUrl = (url) => {
   }
 };
 
-// ✅ Helper function to delete image from Cloudinary (EXACTLY as you had it)
+// ✅ Helper function to delete image from Cloudinary
 const deleteCloudinaryImage = async (publicId) => {
   if (!publicId) return;
-
   try {
     console.log(`Attempting to delete Cloudinary image with public ID: ${publicId}`);
     const result = await cloudinary.uploader.destroy(publicId);
@@ -238,7 +248,7 @@ const deleteCloudinaryImage = async (publicId) => {
   }
 };
 
-// ✅ Multer Storage for Cloudinary (EXACTLY as you had it)
+// ✅ Multer Storage for Cloudinary
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
@@ -251,7 +261,36 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage });
 
-// --- Helper functions for slug generation (EXACTLY as you had it) ---
+// 🆕 Helper function to process tags from request
+const processTags = (tagsInput) => {
+  if (!tagsInput) return [];
+  
+  let tags = [];
+  
+  try {
+    // Try to parse as JSON first (from frontend)
+    if (typeof tagsInput === 'string') {
+      tags = JSON.parse(tagsInput);
+    } else if (Array.isArray(tagsInput)) {
+      tags = tagsInput;
+    }
+  } catch (e) {
+    // If JSON parsing fails, treat as comma-separated string
+    if (typeof tagsInput === 'string') {
+      tags = tagsInput.split(',').map(tag => tag.trim()).filter(Boolean);
+    } else {
+      tags = [];
+    }
+  }
+  
+  // Clean and validate tags
+  return tags
+    .map(tag => tag.toString().trim().toLowerCase())
+    .filter(tag => tag.length > 0 && tag.length <= 50) // Max 50 chars per tag
+    .slice(0, 10); // Max 10 tags
+};
+
+// --- Helper functions for slug generation ---
 const generateSlug = (text) => {
   return text
     .toString()
@@ -281,16 +320,16 @@ const findUniqueSlug = async (baseSlug, BlogModel, excludeId = null) => {
   }
 };
 
-// --- JWT Authentication Middleware (Enhanced) ---
+// --- JWT Authentication Middleware ---
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-
+  
   if (!token)
     return res
       .status(401)
       .json({ message: "Access Denied: No token provided" });
-
+  
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       console.error("JWT Verification Error:", err);
@@ -300,65 +339,53 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
-// Add this endpoint after your existing auth routes in blogsPanel.js
 
 // ✅ Validate JWT Token Endpoint
 app.get("/api/auth/validate-token", authenticateToken, async (req, res) => {
-    try {
-      // The authenticateToken middleware has already validated the token
-      // and attached user info to req.user
-      
-      // Optionally fetch fresh user data from database
-      const user = await User.findById(req.user.id);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-  
-      if (!user.isActive) {
-        return res.status(403).json({ message: "Account is inactive" });
-      }
-  
-      // Return user profile data
-      res.json({
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        isActive: user.isActive,
-        lastLogin: user.lastLogin,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      });
-    } catch (err) {
-      console.error("Token validation error:", err);
-      res.status(500).json({ 
-        message: "Error validating token", 
-        error: err.message 
-      });
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
-  });
-  
-  // ✅ Optional: Logout Endpoint (for cleanup on backend if needed)
-  app.post("/api/auth/logout", authenticateToken, async (req, res) => {
-    try {
-      // Optional: Update user's last logout time or invalidate refresh tokens
-      const user = await User.findById(req.user.id);
-      if (user) {
-        // You could add a lastLogout field to your User model if needed
-        // user.lastLogout = new Date();
-        // await user.save();
-      }
-  
-      res.json({ message: "Logged out successfully" });
-    } catch (err) {
-      console.error("Logout error:", err);
-      res.status(500).json({ 
-        message: "Error during logout", 
-        error: err.message 
-      });
+    if (!user.isActive) {
+      return res.status(403).json({ message: "Account is inactive" });
     }
-  });
-  
+    
+    res.json({
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
+      lastLogin: user.lastLogin,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+  } catch (err) {
+    console.error("Token validation error:", err);
+    res.status(500).json({ 
+      message: "Error validating token", 
+      error: err.message 
+    });
+  }
+});
+
+// ✅ Logout Endpoint
+app.post("/api/auth/logout", authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (user) {
+      // Optional: add lastLogout field if needed
+    }
+    res.json({ message: "Logged out successfully" });
+  } catch (err) {
+    console.error("Logout error:", err);
+    res.status(500).json({ 
+      message: "Error during logout", 
+      error: err.message 
+    });
+  }
+});
 
 // Enhanced role-based middleware
 const requireRole = (roles) => {
@@ -380,34 +407,33 @@ const requireRole = (roles) => {
 };
 
 // --- Enhanced Authentication Routes ---
-
-// Register User (Enhanced)
+// Register User
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { username, email, password, role = 'user' } = req.body;
-
+    
     if (!username || !password) {
       return res.status(400).json({ 
         message: "Username and password are required" 
       });
     }
-
+    
     const existingUser = await User.findOne({ 
       $or: [
         { username }, 
         ...(email ? [{ email }] : [])
       ] 
     });
-
+    
     if (existingUser) {
       return res.status(409).json({ 
         message: "User with that username or email already exists" 
       });
     }
-
+    
     const user = new User({ username, email, password, role });
     await user.save();
-
+    
     res.status(201).json({ 
       message: "User registered successfully!", 
       user: user.profile 
@@ -430,34 +456,34 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// Login User (Enhanced)
+// Login User
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { loginIdentifier, password } = req.body;
-
+    
     if (!loginIdentifier || !password) {
       return res.status(400).json({ 
         message: "Login identifier and password are required" 
       });
     }
-
+    
     const user = await User.findOne({
       $or: [{ username: loginIdentifier }, { email: loginIdentifier }],
       isActive: true
     }).select('+password');
-
+    
     if (!user) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-
+    
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-
+    
     user.lastLogin = new Date();
     await user.save();
-
+    
     const token = jwt.sign(
       { 
         id: user._id, 
@@ -468,7 +494,7 @@ app.post("/api/auth/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
     );
-
+    
     res.json({
       message: "Logged in successfully",
       token,
@@ -526,13 +552,11 @@ app.put("/api/auth/profile", authenticateToken, async (req, res) => {
     });
   }
 });
-// ================ USER MANAGEMENT ENDPOINTS ================
-// Add these after your existing auth routes
 
-// ✅ Get all users (Admin/SuperAdmin only)
+// ================ USER MANAGEMENT ENDPOINTS ================
+// Get all users (Admin/SuperAdmin only)
 app.get("/api/auth/users", authenticateToken, async (req, res) => {
   try {
-    // Check if user has admin or superadmin role
     if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
       return res.status(403).json({ 
         message: "Access denied. Admin privileges required.",
@@ -540,10 +564,9 @@ app.get("/api/auth/users", authenticateToken, async (req, res) => {
         currentRole: req.user.role
       });
     }
-
+    
     console.log(`Admin ${req.user.username} fetching all users`);
     
-    // Fetch all users from database (exclude passwords)
     const users = await User.find({}, { password: 0 }).sort({ createdAt: -1 });
     
     console.log(`Found ${users.length} users`);
@@ -558,7 +581,7 @@ app.get("/api/auth/users", authenticateToken, async (req, res) => {
   }
 });
 
-// ✅ Get specific user by ID (Admin/SuperAdmin only)
+// Get specific user by ID (Admin/SuperAdmin only)
 app.get("/api/auth/users/:id", authenticateToken, async (req, res) => {
   try {
     if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
@@ -566,19 +589,18 @@ app.get("/api/auth/users/:id", authenticateToken, async (req, res) => {
         message: "Access denied. Admin privileges required." 
       });
     }
-
+    
     const { id } = req.params;
-
-    // Validate MongoDB ObjectId format
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid user ID format" });
     }
-
+    
     const user = await User.findById(id, { password: 0 });
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-
+    
     res.json(user);
   } catch (err) {
     console.error("Error fetching user:", err);
@@ -589,7 +611,7 @@ app.get("/api/auth/users/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// ✅ Update user (Admin/SuperAdmin only)
+// Update user (Admin/SuperAdmin only)
 app.put("/api/auth/users/:id", authenticateToken, async (req, res) => {
   try {
     if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
@@ -597,50 +619,44 @@ app.put("/api/auth/users/:id", authenticateToken, async (req, res) => {
         message: "Access denied. Admin privileges required." 
       });
     }
-
+    
     const { id } = req.params;
     const { username, email, role, isActive } = req.body;
-
-    // Validate MongoDB ObjectId format
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid user ID format" });
     }
-
-    // Find the user to update
+    
     const userToUpdate = await User.findById(id);
     if (!userToUpdate) {
       return res.status(404).json({ message: "User not found" });
     }
-
-    // Prevent updating main admin
+    
     if (userToUpdate.username === 'admin' && username && username !== 'admin') {
       return res.status(403).json({ 
         message: "Cannot change main admin username" 
       });
     }
-
-    // Only superadmin can promote to superadmin
+    
     if (role === 'superadmin' && req.user.role.toLowerCase() !== 'superadmin') {
       return res.status(403).json({ 
         message: "Only superadmin can promote users to superadmin role" 
       });
     }
-
-    // Update user fields
+    
     const updateData = {};
     if (username) updateData.username = username;
     if (email) updateData.email = email;
     if (role) updateData.role = role;
     if (typeof isActive === 'boolean') updateData.isActive = isActive;
-
+    
     const updatedUser = await User.findByIdAndUpdate(
       id, 
       updateData, 
       { new: true, runValidators: true }
     ).select({ password: 0 });
-
+    
     console.log(`User ${updatedUser.username} updated by ${req.user.username}`);
-
     res.json({ 
       message: "User updated successfully",
       user: updatedUser
@@ -661,56 +677,50 @@ app.put("/api/auth/users/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// ✅ Delete user (Admin/SuperAdmin only)
+// Delete user (Admin/SuperAdmin only)
 app.delete("/api/auth/users/:id", authenticateToken, async (req, res) => {
   try {
-    // Check if user has admin or superadmin role
     if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
       return res.status(403).json({ 
         message: "Access denied. Admin privileges required." 
       });
     }
-
+    
     const { id } = req.params;
     console.log(`Admin ${req.user.username} attempting to delete user: ${id}`);
-
-    // Validate MongoDB ObjectId format
+    
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid user ID format" });
     }
-
-    // Find the user to delete
+    
     const userToDelete = await User.findById(id);
     if (!userToDelete) {
       return res.status(404).json({ message: "User not found" });
     }
-
+    
     console.log(`Found user to delete: ${userToDelete.username}`);
-
-    // Prevent deletion of main admin
+    
     if (userToDelete.username === 'admin') {
       return res.status(403).json({ 
         message: "Cannot delete the main admin user" 
       });
     }
-
-    // Prevent self-deletion
+    
     if (userToDelete._id.toString() === req.user.id) {
       return res.status(403).json({ 
         message: "Cannot delete yourself" 
       });
     }
-
-    // Only superadmin can delete other superadmins
+    
     if (userToDelete.role === 'superadmin' && req.user.role.toLowerCase() !== 'superadmin') {
       return res.status(403).json({ 
         message: "Only superadmin can delete other superadmins" 
       });
     }
-
+    
     await User.findByIdAndDelete(id);
     console.log(`User ${userToDelete.username} deleted successfully`);
-
+    
     res.json({ 
       message: `User "${userToDelete.username}" deleted successfully`,
       deletedUser: {
@@ -728,7 +738,7 @@ app.delete("/api/auth/users/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// ✅ Add general ping endpoint for frontend health checks
+// ✅ General ping endpoint
 app.get("/api/ping", (req, res) => {
   res.json({ 
     message: "Server is running!", 
@@ -738,32 +748,38 @@ app.get("/api/ping", (req, res) => {
   });
 });
 
-
-// === Wake/Ping Endpoint (EXACTLY as you had it) ===
+// ✅ Wake/Ping Endpoint
 app.get("/api/blogs/ping", (req, res) => {
   res.status(200).json({ message: "Server is awake!" });
 });
 
-// ✅ Fetch all blogs (EXACTLY as you had it)
+// ✅ Fetch all blogs WITH TAGS SUPPORT
 app.get("/api/blogs", async (req, res) => {
   try {
-    const { category, subcategory, status, limit, skip } = req.query;
+    const { category, subcategory, status, tags, limit, skip } = req.query;
     let query = {};
+    
     if (category) query.category = category;
     if (subcategory) query.subcategory = subcategory;
     if (status) query.status = status;
-
+    
+    // 🆕 Add tag filtering support
+    if (tags) {
+      const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
+      query.tags = { $in: tagArray };
+    }
+    
     const parsedLimit = parseInt(limit) || 8;
     const parsedSkip = parseInt(skip) || 0;
-
+    
     const blogs = await Blog.find(query)
       .sort({ createdAt: -1 })
       .skip(parsedSkip)
       .limit(parsedLimit + 1);
-
+    
     const hasMore = blogs.length > parsedLimit;
     const blogsToSend = hasMore ? blogs.slice(0, parsedLimit) : blogs;
-
+    
     res.json({ blogs: blogsToSend, hasMore });
   } catch (err) {
     console.error("Error fetching blogs:", err);
@@ -771,35 +787,33 @@ app.get("/api/blogs", async (req, res) => {
   }
 });
 
-// ✅ Fetch blog by SLUG (EXACTLY as you had it)
+// ✅ Fetch blog by SLUG
 app.get("/api/blogs/slug/:slug", async (req, res) => {
   try {
     const blog = await Blog.findOne({ slug: req.params.slug });
     if (!blog) return res.status(404).json({ message: "Blog not found" });
-
     res.json(blog);
   } catch (err) {
     res.status(500).json({ message: "Error fetching blog", error: err.message });
   }
 });
 
-// ✅ Fetch blog by ID (EXACTLY as you had it)
+// ✅ Fetch blog by ID
 app.get("/api/blogs/:id", async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: "Invalid Blog ID format" });
     }
-
+    
     const blog = await Blog.findById(req.params.id);
     if (!blog) return res.status(404).json({ message: "Blog not found" });
-
     res.json(blog);
   } catch (err) {
     res.status(500).json({ message: "Error fetching blog", error: err.message });
   }
 });
 
-// ✅ Create a new blog (EXACTLY as you had it)
+// 🆕 UPDATED: Create a new blog WITH TAGS SUPPORT
 app.post(
   "/api/blogs",
   authenticateToken,
@@ -814,8 +828,19 @@ app.post(
         author,
         status,
         slug: providedSlug,
+        tags: tagsInput
       } = req.body;
 
+      console.log("📝 Creating blog with data:", {
+        title,
+        category,
+        subcategory,
+        author,
+        status,
+        slug: providedSlug,
+        tags: tagsInput
+      });
+      
       let blogSlug;
       if (providedSlug) {
         blogSlug = generateSlug(providedSlug);
@@ -823,15 +848,18 @@ app.post(
         blogSlug = generateSlug(title);
       }
       blogSlug = await findUniqueSlug(blogSlug, Blog);
-
+      
       let imagePath = null;
       let imagePublicId = null;
-
       if (req.file) {
         imagePath = req.file.path;
         imagePublicId = req.file.filename || getPublicIdFromUrl(imagePath);
       }
-
+      
+      // 🆕 Process tags
+      const processedTags = processTags(tagsInput);
+      console.log("🏷️ Processed tags:", processedTags);
+      
       const newBlog = new Blog({
         title,
         slug: blogSlug,
@@ -842,10 +870,12 @@ app.post(
         image: imagePath,
         imagePublicId,
         status: status || "None",
+        tags: processedTags // 🆕 Add tags to the blog
       });
-
+      
       await newBlog.save();
-
+      console.log("✅ Blog created successfully with tags:", newBlog.tags);
+      
       res.status(201).json({ message: "Blog created successfully", blog: newBlog });
     } catch (err) {
       if (err.code === 11000 && err.keyPattern && err.keyPattern.slug) {
@@ -860,7 +890,7 @@ app.post(
   }
 );
 
-// ✅ Update a blog (EXACTLY as you had it)
+// 🆕 UPDATED: Update a blog WITH TAGS SUPPORT
 app.put(
   "/api/blogs/:id",
   authenticateToken,
@@ -870,13 +900,20 @@ app.put(
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
         return res.status(400).json({ message: "Invalid Blog ID format" });
       }
-
+      
       const existingBlog = await Blog.findById(req.params.id);
       if (!existingBlog)
         return res.status(404).json({ message: "Blog not found" });
-
+      
       let updatedData = { ...req.body };
-
+      
+      // 🆕 Process tags if provided
+      if (req.body.tags !== undefined) {
+        updatedData.tags = processTags(req.body.tags);
+        console.log("🏷️ Updated tags:", updatedData.tags);
+      }
+      
+      // Handle slug updates
       if (updatedData.title || updatedData.slug) {
         let baseSlug;
         if (updatedData.slug) {
@@ -884,7 +921,7 @@ app.put(
         } else {
           baseSlug = generateSlug(updatedData.title || existingBlog.title);
         }
-
+        
         if (baseSlug !== existingBlog.slug) {
           const uniqueSlug = await findUniqueSlug(
             baseSlug,
@@ -896,7 +933,8 @@ app.put(
           updatedData.slug = existingBlog.slug;
         }
       }
-
+      
+      // Handle image updates
       if (req.file) {
         if (existingBlog.imagePublicId) {
           await deleteCloudinaryImage(existingBlog.imagePublicId);
@@ -905,13 +943,14 @@ app.put(
         updatedData.imagePublicId =
           req.file.filename || getPublicIdFromUrl(req.file.path);
       }
-
+      
       const updatedBlog = await Blog.findByIdAndUpdate(
         req.params.id,
         updatedData,
         { new: true, runValidators: true }
       );
-
+      
+      console.log("✅ Blog updated successfully with tags:", updatedBlog.tags);
       res.json({ message: "Blog updated successfully", blog: updatedBlog });
     } catch (err) {
       if (err.code === 11000 && err.keyPattern && err.keyPattern.slug) {
@@ -926,11 +965,10 @@ app.put(
   }
 );
 
-
 // ✅ Get current user's blog posts only
 app.get("/api/blogs/my-posts", authenticateToken, async (req, res) => {
   try {
-    const { category, subcategory, status, limit, skip } = req.query;
+    const { category, subcategory, status, tags, limit, skip } = req.query;
     
     console.log(`Fetching posts for user: ${req.user.username} (ID: ${req.user.id})`);
     
@@ -947,15 +985,21 @@ app.get("/api/blogs/my-posts", authenticateToken, async (req, res) => {
     if (category) query.category = category;
     if (subcategory) query.subcategory = subcategory;
     if (status) query.status = status;
-
+    
+    // 🆕 Add tag filtering for user posts
+    if (tags) {
+      const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
+      query.tags = { $in: tagArray };
+    }
+    
     const parsedLimit = parseInt(limit) || 50;
     const parsedSkip = parseInt(skip) || 0;
-
+    
     const blogs = await Blog.find(query)
       .sort({ createdAt: -1 })
       .skip(parsedSkip)
       .limit(parsedLimit);
-
+    
     console.log(`✅ Found ${blogs.length} posts for user ${req.user.username}`);
     
     res.json({ 
@@ -969,23 +1013,68 @@ app.get("/api/blogs/my-posts", authenticateToken, async (req, res) => {
     res.status(500).json({ message: "Error fetching user blogs", error: err.message });
   }
 });
-// ✅ Delete a blog (EXACTLY as you had it)
+
+// 🆕 NEW: Get all unique tags from all blogs
+app.get("/api/blogs/tags", async (req, res) => {
+  try {
+    const tags = await Blog.distinct("tags");
+    const sortedTags = tags.sort();
+    
+    res.json({ 
+      tags: sortedTags,
+      count: sortedTags.length
+    });
+  } catch (err) {
+    console.error("Error fetching tags:", err);
+    res.status(500).json({ message: "Error fetching tags", error: err.message });
+  }
+});
+
+// 🆕 NEW: Search blogs by tags
+app.get("/api/blogs/search/tags", async (req, res) => {
+  try {
+    const { tags, limit, skip } = req.query;
+    
+    if (!tags) {
+      return res.status(400).json({ message: "Tags parameter is required" });
+    }
+    
+    const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
+    const parsedLimit = parseInt(limit) || 10;
+    const parsedSkip = parseInt(skip) || 0;
+    
+    const blogs = await Blog.find({ tags: { $in: tagArray } })
+      .sort({ createdAt: -1 })
+      .skip(parsedSkip)
+      .limit(parsedLimit);
+    
+    res.json({ 
+      blogs,
+      searchedTags: tagArray,
+      count: blogs.length
+    });
+  } catch (err) {
+    console.error("Error searching blogs by tags:", err);
+    res.status(500).json({ message: "Error searching blogs", error: err.message });
+  }
+});
+
+// ✅ Delete a blog
 app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: "Invalid Blog ID format" });
     }
-
+    
     const blogToDelete = await Blog.findById(req.params.id);
     if (!blogToDelete)
       return res.status(404).json({ message: "Blog not found" });
-
+    
     if (blogToDelete.imagePublicId) {
       await deleteCloudinaryImage(blogToDelete.imagePublicId);
     }
-
+    
     await Blog.findByIdAndDelete(req.params.id);
-
     res.json({ message: "Blog and associated image deleted successfully" });
   } catch (err) {
     console.error("Error deleting blog:", err);
@@ -993,7 +1082,6 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
   }
 });
 
-
-// ✅ Start the blog server (EXACTLY as you had it)
+// ✅ Start the blog server
 const PORT = process.env.BLOG_PORT || 5002;
 app.listen(PORT, () => console.log(`🚀 Blog server running on port ${PORT}`));
