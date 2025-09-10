@@ -1085,3 +1085,5 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
 // ✅ Start the blog server
 const PORT = process.env.BLOG_PORT || 5002;
 app.listen(PORT, () => console.log(`🚀 Blog server running on port ${PORT}`));
+
+
