@@ -149,7 +149,7 @@ userSchema.virtual('profile').get(function() {
 
 const User = mongoose.model("User", userSchema);
 
-// ✅ UPDATED Blog Schema & Model WITH TAGS SUPPORT
+// ✅ UPDATED Blog Schema & Model WITH TAGS AND BANNER SUPPORT
 const blogSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
@@ -171,6 +171,9 @@ const blogSchema = new mongoose.Schema(
     author: { type: String, required: true },
     image: { type: String },
     imagePublicId: { type: String },
+    // ✅ NEW: Banner Image Fields
+    bannerImage: { type: String },
+    bannerImagePublicId: { type: String },
     status: {
       type: String,
       enum: ["Trending", "Featured", "Editor's Pick", "Recommended", "None"],
@@ -248,6 +251,28 @@ const deleteCloudinaryImage = async (publicId) => {
   }
 };
 
+// ✅ Enhanced Helper function to delete all blog images from Cloudinary
+const deleteAllBlogImages = async (blog) => {
+  const deletePromises = [];
+  
+  if (blog.imagePublicId) {
+    deletePromises.push(deleteCloudinaryImage(blog.imagePublicId));
+  }
+  
+  if (blog.bannerImagePublicId) {
+    deletePromises.push(deleteCloudinaryImage(blog.bannerImagePublicId));
+  }
+  
+  if (deletePromises.length > 0) {
+    try {
+      await Promise.all(deletePromises);
+      console.log("✅ All blog images deleted successfully");
+    } catch (error) {
+      console.error("❌ Error deleting some blog images:", error);
+    }
+  }
+};
+
 // ✅ Multer Storage for Cloudinary
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -259,14 +284,23 @@ const storage = new CloudinaryStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({ 
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit per file
+  }
+});
+
+// ✅ Configure multer for multiple image fields
+const uploadFields = upload.fields([
+  { name: 'image', maxCount: 1 },        // Featured image
+  { name: 'bannerImage', maxCount: 1 }   // Banner image
+]);
 
 // 🆕 Helper function to process tags from request
 const processTags = (tagsInput) => {
   if (!tagsInput) return [];
-  
   let tags = [];
-  
   try {
     // Try to parse as JSON first (from frontend)
     if (typeof tagsInput === 'string') {
@@ -282,7 +316,6 @@ const processTags = (tagsInput) => {
       tags = [];
     }
   }
-  
   // Clean and validate tags
   return tags
     .map(tag => tag.toString().trim().toLowerCase())
@@ -324,12 +357,10 @@ const findUniqueSlug = async (baseSlug, BlogModel, excludeId = null) => {
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  
   if (!token)
     return res
       .status(401)
       .json({ message: "Access Denied: No token provided" });
-  
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       console.error("JWT Verification Error:", err);
@@ -753,6 +784,18 @@ app.get("/api/blogs/ping", (req, res) => {
   res.status(200).json({ message: "Server is awake!" });
 });
 
+// ✅ Test endpoint for banner image upload
+app.post("/api/test/banner-upload", uploadFields, (req, res) => {
+  console.log("Test upload - Files received:", req.files);
+  console.log("Test upload - Body:", req.body);
+  
+  res.json({
+    message: "Test upload successful",
+    files: req.files,
+    body: req.body
+  });
+});
+
 // ✅ Fetch all blogs WITH TAGS SUPPORT
 app.get("/api/blogs", async (req, res) => {
   try {
@@ -813,11 +856,11 @@ app.get("/api/blogs/:id", async (req, res) => {
   }
 });
 
-// 🆕 UPDATED: Create a new blog WITH TAGS SUPPORT
+// 🆕 UPDATED: Create a new blog WITH TAGS AND BANNER SUPPORT
 app.post(
   "/api/blogs",
   authenticateToken,
-  upload.single("image"),
+  uploadFields, // ✅ Changed from upload.single("image")
   async (req, res) => {
     try {
       const {
@@ -830,7 +873,7 @@ app.post(
         slug: providedSlug,
         tags: tagsInput
       } = req.body;
-
+      
       console.log("📝 Creating blog with data:", {
         title,
         category,
@@ -838,7 +881,8 @@ app.post(
         author,
         status,
         slug: providedSlug,
-        tags: tagsInput
+        tags: tagsInput,
+        files: req.files
       });
       
       let blogSlug;
@@ -849,11 +893,24 @@ app.post(
       }
       blogSlug = await findUniqueSlug(blogSlug, Blog);
       
+      // ✅ Handle Featured Image
       let imagePath = null;
       let imagePublicId = null;
-      if (req.file) {
-        imagePath = req.file.path;
-        imagePublicId = req.file.filename || getPublicIdFromUrl(imagePath);
+      if (req.files && req.files.image && req.files.image[0]) {
+        const imageFile = req.files.image[0];
+        imagePath = imageFile.path;
+        imagePublicId = imageFile.filename || getPublicIdFromUrl(imagePath);
+        console.log("📸 Featured image uploaded:", imagePath);
+      }
+      
+      // ✅ Handle Banner Image
+      let bannerImagePath = null;
+      let bannerImagePublicId = null;
+      if (req.files && req.files.bannerImage && req.files.bannerImage[0]) {
+        const bannerFile = req.files.bannerImage[0];
+        bannerImagePath = bannerFile.path;
+        bannerImagePublicId = bannerFile.filename || getPublicIdFromUrl(bannerImagePath);
+        console.log("🖼️ Banner image uploaded:", bannerImagePath);
       }
       
       // 🆕 Process tags
@@ -869,15 +926,32 @@ app.post(
         author,
         image: imagePath,
         imagePublicId,
+        bannerImage: bannerImagePath,        // ✅ New field
+        bannerImagePublicId,                 // ✅ New field
         status: status || "None",
-        tags: processedTags // 🆕 Add tags to the blog
+        tags: processedTags
       });
       
       await newBlog.save();
-      console.log("✅ Blog created successfully with tags:", newBlog.tags);
+      console.log("✅ Blog created successfully with images and tags");
       
-      res.status(201).json({ message: "Blog created successfully", blog: newBlog });
+      res.status(201).json({ 
+        message: "Blog created successfully", 
+        blog: newBlog 
+      });
     } catch (err) {
+      // ✅ Cleanup uploaded files if blog creation fails
+      if (req.files) {
+        if (req.files.image && req.files.image[0]) {
+          const imagePublicId = req.files.image[0].filename || getPublicIdFromUrl(req.files.image[0].path);
+          await deleteCloudinaryImage(imagePublicId);
+        }
+        if (req.files.bannerImage && req.files.bannerImage[0]) {
+          const bannerPublicId = req.files.bannerImage[0].filename || getPublicIdFromUrl(req.files.bannerImage[0].path);
+          await deleteCloudinaryImage(bannerPublicId);
+        }
+      }
+      
       if (err.code === 11000 && err.keyPattern && err.keyPattern.slug) {
         return res.status(409).json({
           message: "A blog with a similar title/slug already exists. Please choose a unique title or provide a custom slug.",
@@ -890,11 +964,11 @@ app.post(
   }
 );
 
-// 🆕 UPDATED: Update a blog WITH TAGS SUPPORT
+// 🆕 UPDATED: Update a blog WITH TAGS AND BANNER SUPPORT
 app.put(
   "/api/blogs/:id",
   authenticateToken,
-  upload.single("image"),
+  uploadFields, // ✅ Changed from upload.single("image")
   async (req, res) => {
     try {
       if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -934,14 +1008,28 @@ app.put(
         }
       }
       
-      // Handle image updates
-      if (req.file) {
+      // ✅ Handle Featured Image Updates
+      if (req.files && req.files.image && req.files.image[0]) {
+        console.log("📸 Updating featured image");
+        // Delete old featured image
         if (existingBlog.imagePublicId) {
           await deleteCloudinaryImage(existingBlog.imagePublicId);
         }
-        updatedData.image = req.file.path;
-        updatedData.imagePublicId =
-          req.file.filename || getPublicIdFromUrl(req.file.path);
+        // Set new featured image
+        updatedData.image = req.files.image[0].path;
+        updatedData.imagePublicId = req.files.image[0].filename || getPublicIdFromUrl(req.files.image[0].path);
+      }
+      
+      // ✅ Handle Banner Image Updates
+      if (req.files && req.files.bannerImage && req.files.bannerImage[0]) {
+        console.log("🖼️ Updating banner image");
+        // Delete old banner image
+        if (existingBlog.bannerImagePublicId) {
+          await deleteCloudinaryImage(existingBlog.bannerImagePublicId);
+        }
+        // Set new banner image
+        updatedData.bannerImage = req.files.bannerImage[0].path;
+        updatedData.bannerImagePublicId = req.files.bannerImage[0].filename || getPublicIdFromUrl(req.files.bannerImage[0].path);
       }
       
       const updatedBlog = await Blog.findByIdAndUpdate(
@@ -950,7 +1038,7 @@ app.put(
         { new: true, runValidators: true }
       );
       
-      console.log("✅ Blog updated successfully with tags:", updatedBlog.tags);
+      console.log("✅ Blog updated successfully with images and tags");
       res.json({ message: "Blog updated successfully", blog: updatedBlog });
     } catch (err) {
       if (err.code === 11000 && err.keyPattern && err.keyPattern.slug) {
@@ -1059,7 +1147,7 @@ app.get("/api/blogs/search/tags", async (req, res) => {
   }
 });
 
-// ✅ Delete a blog
+// ✅ Delete a blog WITH BANNER IMAGE CLEANUP
 app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -1070,12 +1158,28 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
     if (!blogToDelete)
       return res.status(404).json({ message: "Blog not found" });
     
+    // ✅ Delete both featured image and banner image
+    const deletePromises = [];
+    
     if (blogToDelete.imagePublicId) {
-      await deleteCloudinaryImage(blogToDelete.imagePublicId);
+      console.log("🗑️ Deleting featured image:", blogToDelete.imagePublicId);
+      deletePromises.push(deleteCloudinaryImage(blogToDelete.imagePublicId));
+    }
+    
+    if (blogToDelete.bannerImagePublicId) {
+      console.log("🗑️ Deleting banner image:", blogToDelete.bannerImagePublicId);
+      deletePromises.push(deleteCloudinaryImage(blogToDelete.bannerImagePublicId));
+    }
+    
+    // Delete images in parallel
+    if (deletePromises.length > 0) {
+      await Promise.all(deletePromises);
     }
     
     await Blog.findByIdAndDelete(req.params.id);
-    res.json({ message: "Blog and associated image deleted successfully" });
+    console.log("✅ Blog and associated images deleted successfully");
+    
+    res.json({ message: "Blog and associated images deleted successfully" });
   } catch (err) {
     console.error("Error deleting blog:", err);
     res.status(500).json({ message: "Error deleting blog", error: err.message });
@@ -1085,5 +1189,3 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
 // ✅ Start the blog server
 const PORT = process.env.BLOG_PORT || 5002;
 app.listen(PORT, () => console.log(`🚀 Blog server running on port ${PORT}`));
-
-
