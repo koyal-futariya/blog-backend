@@ -32,38 +32,19 @@ const corsOptions = {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "DELETE"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
 };
 
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// ✅ Enhanced CORS and Error Handling Middleware
+// ✅ Debugging Middleware
 app.use((req, res, next) => {
-  // Set CORS headers for all responses (including errors)
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // Handle preflight OPTIONS requests
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
-
-// ✅ Request Logging Middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log("Incoming Request:", req.method, req.url);
   console.log("Origin:", req.headers.origin);
-  if (['POST', 'PUT'].includes(req.method) && req.body) {
-    console.log('Body Keys:', Object.keys(req.body));
-  }
   next();
 });
 
@@ -94,7 +75,7 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Password is required'],
       minlength: [6, 'Password must be at least 6 characters long'],
-      select: false
+      select: false // Never return password in queries
     },
     role: {
       type: String,
@@ -126,9 +107,11 @@ const userSchema = new mongoose.Schema(
   }
 );
 
+// Indexes for better performance
 userSchema.index({ username: 1 }, { unique: true });
 userSchema.index({ email: 1 }, { unique: true, sparse: true });
 
+// Pre-save hook to hash password
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   try {
@@ -140,6 +123,7 @@ userSchema.pre('save', async function(next) {
   }
 });
 
+// Method to compare passwords
 userSchema.methods.comparePassword = async function(candidatePassword) {
   try {
     return await bcrypt.compare(candidatePassword, this.password);
@@ -149,6 +133,7 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
   }
 };
 
+// Virtual for user's full profile (excluding sensitive data)
 userSchema.virtual('profile').get(function() {
   return {
     id: this._id,
@@ -164,7 +149,7 @@ userSchema.virtual('profile').get(function() {
 
 const User = mongoose.model("User", userSchema);
 
-// ✅ FIXED Blog Schema with Flexible Courses
+// ✅ UPDATED Blog Schema & Model WITH TAGS AND BANNER SUPPORT
 const blogSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
@@ -186,6 +171,7 @@ const blogSchema = new mongoose.Schema(
     author: { type: String, required: true },
     image: { type: String },
     imagePublicId: { type: String },
+    // ✅ NEW: Banner Image Fields
     bannerImage: { type: String },
     bannerImagePublicId: { type: String },
     status: {
@@ -193,125 +179,25 @@ const blogSchema = new mongoose.Schema(
       enum: ["Trending", "Featured", "Editor's Pick", "Recommended", "None"],
       default: "None",
     },
+    // 🆕 ADDED TAGS FIELD
     tags: { 
       type: [String], 
       default: [],
       validate: {
         validator: function(tags) {
-          return tags.length <= 10;
+          return tags.length <= 10; // Limit to 10 tags
         },
         message: 'Cannot have more than 10 tags'
       }
-    },
-    // ✅ FIXED: Flexible courses field
-    courses: {
-      type: [{
-        heading: {
-          type: String,
-          required: false, // ✅ Changed to false
-          trim: true,
-          maxLength: 100,
-          default: ''
-        },
-        description: {
-          type: String,
-          required: false, // ✅ Changed to false
-          trim: true,
-          maxLength: 300,
-          default: ''
-        },
-        url: {
-          type: String,
-          required: false, // ✅ Changed to false
-          trim: true,
-          validate: {
-            validator: function(v) {
-              return !v || /^https?:\/\/.+/.test(v);
-            },
-            message: 'Please enter a valid URL or leave empty'
-          },
-          default: ''
-        },
-        image: {
-          type: String,
-          default: null
-        },
-        imagePublicId: {
-          type: String,
-          default: null
-        }
-      }],
-      default: []
     }
   },
   { timestamps: true }
 );
 
+// 🆕 Add index for tags for better search performance
 blogSchema.index({ tags: 1 });
+
 const Blog = mongoose.model("Blog", blogSchema);
-
-// ✅ Course Schema for Individual Course Management
-const courseSchema = new mongoose.Schema(
-  {
-    heading: {
-      type: String,
-      required: true,
-      trim: true,
-      maxLength: [100, 'Course heading cannot be longer than 100 characters']
-    },
-    description: {
-      type: String,
-      required: true,
-      trim: true,
-      maxLength: [300, 'Course description cannot be longer than 300 characters']
-    },
-    url: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: function(v) {
-          return /^https?:\/\/.+/.test(v);
-        },
-        message: 'Please enter a valid URL starting with http:// or https://'
-      }
-    },
-    image: { type: String },
-    imagePublicId: { type: String },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    authorName: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    category: {
-      type: String,
-      trim: true,
-      default: 'General'
-    },
-    isActive: {
-      type: Boolean,
-      default: true
-    },
-    priority: {
-      type: Number,
-      default: 0
-    }
-  },
-  { 
-    timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true }
-  }
-);
-
-courseSchema.index({ heading: 1, category: 1 });
-courseSchema.index({ createdBy: 1, createdAt: -1 });
-const Course = mongoose.model("Course", courseSchema);
 
 // ✅ Configure Cloudinary
 cloudinary.config({
@@ -320,7 +206,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// ✅ Helper Functions
+// ✅ Helper function to extract public_id from Cloudinary URL
 const getPublicIdFromUrl = (url) => {
   if (!url) return null;
   try {
@@ -336,6 +222,7 @@ const getPublicIdFromUrl = (url) => {
         publicIdWithExtension.lastIndexOf(".")
       );
     } else if (urlParts.length > 1) {
+      const fileNameWithExtension = urlParts[urlParts.length - 1];
       const publicIdWithFolder = urlParts
         .slice(urlParts.lastIndexOf("upload") + 2)
         .join("/");
@@ -351,10 +238,11 @@ const getPublicIdFromUrl = (url) => {
   }
 };
 
+// ✅ Helper function to delete image from Cloudinary
 const deleteCloudinaryImage = async (publicId) => {
   if (!publicId) return;
   try {
-    console.log(`Attempting to delete Cloudinary image: ${publicId}`);
+    console.log(`Attempting to delete Cloudinary image with public ID: ${publicId}`);
     const result = await cloudinary.uploader.destroy(publicId);
     console.log(`Cloudinary deletion result:`, result);
     return result;
@@ -363,26 +251,29 @@ const deleteCloudinaryImage = async (publicId) => {
   }
 };
 
-// ✅ Course Validation Helper
-const validateCourseData = (course) => {
-  const errors = [];
+// ✅ Enhanced Helper function to delete all blog images from Cloudinary
+const deleteAllBlogImages = async (blog) => {
+  const deletePromises = [];
   
-  if (course.heading && course.heading.length > 100) {
-    errors.push('Course heading cannot exceed 100 characters');
+  if (blog.imagePublicId) {
+    deletePromises.push(deleteCloudinaryImage(blog.imagePublicId));
   }
   
-  if (course.description && course.description.length > 300) {
-    errors.push('Course description cannot exceed 300 characters');
+  if (blog.bannerImagePublicId) {
+    deletePromises.push(deleteCloudinaryImage(blog.bannerImagePublicId));
   }
   
-  if (course.url && course.url.trim() && !/^https?:\/\/.+/.test(course.url.trim())) {
-    errors.push('Course URL must be a valid URL starting with http:// or https://');
+  if (deletePromises.length > 0) {
+    try {
+      await Promise.all(deletePromises);
+      console.log("✅ All blog images deleted successfully");
+    } catch (error) {
+      console.error("❌ Error deleting some blog images:", error);
+    }
   }
-  
-  return errors;
 };
 
-// ✅ Multer Configuration
+// ✅ Multer Storage for Cloudinary
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
@@ -400,30 +291,39 @@ const upload = multer({
   }
 });
 
-// ✅ Tag Processing Helper
+// ✅ Configure multer for multiple image fields
+const uploadFields = upload.fields([
+  { name: 'image', maxCount: 1 },        // Featured image
+  { name: 'bannerImage', maxCount: 1 }   // Banner image
+]);
+
+// 🆕 Helper function to process tags from request
 const processTags = (tagsInput) => {
   if (!tagsInput) return [];
   let tags = [];
   try {
+    // Try to parse as JSON first (from frontend)
     if (typeof tagsInput === 'string') {
       tags = JSON.parse(tagsInput);
     } else if (Array.isArray(tagsInput)) {
       tags = tagsInput;
     }
   } catch (e) {
+    // If JSON parsing fails, treat as comma-separated string
     if (typeof tagsInput === 'string') {
       tags = tagsInput.split(',').map(tag => tag.trim()).filter(Boolean);
     } else {
       tags = [];
     }
   }
+  // Clean and validate tags
   return tags
     .map(tag => tag.toString().trim().toLowerCase())
-    .filter(tag => tag.length > 0 && tag.length <= 50)
-    .slice(0, 10);
+    .filter(tag => tag.length > 0 && tag.length <= 50) // Max 50 chars per tag
+    .slice(0, 10); // Max 10 tags
 };
 
-// ✅ Slug Generation Helpers
+// --- Helper functions for slug generation ---
 const generateSlug = (text) => {
   return text
     .toString()
@@ -471,123 +371,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-const requireRole = (roles) => {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({ message: "Access Denied: Authentication required" });
-    }
-    
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        message: "Access Denied: Insufficient permissions",
-        required: roles,
-        current: req.user.role
-      });
-    }
-    
-    next();
-  };
-};
-
-// ✅ Global Error Handler
-app.use((error, req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  console.error('❌ Global error handler:', error);
-  
-  res.status(error.status || 500).json({
-    success: false,
-    message: error.message || 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-    timestamp: new Date().toISOString(),
-    path: req.url,
-    method: req.method
-  });
-});
-
-// ================ HEALTH CHECK & TEST ENDPOINTS ================
-
-// ✅ Health Check Endpoint
-app.get("/api/health", async (req, res) => {
-  try {
-    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-    const blogCount = await Blog.countDocuments();
-    
-    res.json({
-      success: true,
-      message: "Blog API is healthy",
-      timestamp: new Date().toISOString(),
-      version: "1.0.0",
-      environment: process.env.NODE_ENV || 'development',
-      database: {
-        status: dbStatus,
-        blogCount: blogCount
-      },
-      server: {
-        port: process.env.BLOG_PORT || 5002,
-        uptime: process.uptime()
-      }
-    });
-  } catch (err) {
-    console.error('Health check error:', err);
-    res.status(500).json({
-      success: false,
-      message: "Health check failed",
-      error: err.message
-    });
-  }
-});
-
-// ✅ Course Testing Endpoint
-app.post("/api/test/courses", authenticateToken, upload.fields([
-  { name: 'courseImage0', maxCount: 1 },
-  { name: 'courseImage1', maxCount: 1 }
-]), async (req, res) => {
-  try {
-    console.log("🧪 Test courses endpoint");
-    console.log("Body:", req.body);
-    console.log("Files:", req.files);
-    
-    const { coursesData } = req.body;
-    
-    if (coursesData) {
-      const parsed = JSON.parse(coursesData);
-      console.log("Parsed courses:", parsed);
-      
-      const validationResults = parsed.map((course, index) => ({
-        index,
-        course,
-        errors: validateCourseData(course)
-      }));
-      
-      res.json({
-        success: true,
-        message: "Course test successful",
-        coursesData,
-        parsed,
-        validationResults,
-        files: Object.keys(req.files || {})
-      });
-    } else {
-      res.json({
-        success: false,
-        message: "No coursesData provided",
-        body: req.body
-      });
-    }
-  } catch (err) {
-    console.error("Test courses error:", err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      coursesData: req.body.coursesData
-    });
-  }
-});
-
-// ================ AUTHENTICATION ENDPOINTS ================
-
+// ✅ Validate JWT Token Endpoint
 app.get("/api/auth/validate-token", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
@@ -617,8 +401,13 @@ app.get("/api/auth/validate-token", authenticateToken, async (req, res) => {
   }
 });
 
+// ✅ Logout Endpoint
 app.post("/api/auth/logout", authenticateToken, async (req, res) => {
   try {
+    const user = await User.findById(req.user.id);
+    if (user) {
+      // Optional: add lastLogout field if needed
+    }
     res.json({ message: "Logged out successfully" });
   } catch (err) {
     console.error("Logout error:", err);
@@ -629,6 +418,27 @@ app.post("/api/auth/logout", authenticateToken, async (req, res) => {
   }
 });
 
+// Enhanced role-based middleware
+const requireRole = (roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Access Denied: Authentication required" });
+    }
+    
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        message: "Access Denied: Insufficient permissions",
+        required: roles,
+        current: req.user.role
+      });
+    }
+    
+    next();
+  };
+};
+
+// --- Enhanced Authentication Routes ---
+// Register User
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { username, email, password, role = 'user' } = req.body;
@@ -677,6 +487,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
+// Login User
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { loginIdentifier, password } = req.body;
@@ -729,116 +540,263 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// ================ BLOG ENDPOINTS ================
-
-// ✅ FIXED: Get all unique tags with better error handling
-app.get("/api/blogs/tags", async (req, res) => {
+// Get current user profile
+app.get("/api/auth/profile", authenticateToken, async (req, res) => {
   try {
-    console.log("🏷️ Fetching tags...");
-    
-    const blogCount = await Blog.countDocuments();
-    console.log(`Found ${blogCount} blogs in database`);
-    
-    if (blogCount === 0) {
-      console.log("No blogs found, returning empty tags array");
-      return res.json({ 
-        success: true,
-        tags: [],
-        count: 0,
-        message: "No blogs found"
-      });
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
-
-    const tags = await Blog.distinct("tags");
-    console.log("Raw tags from database:", tags);
     
-    const validTags = tags
-      .filter(tag => tag && typeof tag === 'string' && tag.trim().length > 0)
-      .map(tag => tag.toLowerCase().trim())
-      .filter((tag, index, array) => array.indexOf(tag) === index)
-      .sort();
-
-    console.log(`✅ Processed ${validTags.length} unique valid tags`);
-    
-    res.json({ 
-      success: true,
-      tags: validTags,
-      count: validTags.length
-    });
+    res.json({ user: user.profile });
   } catch (err) {
-    console.error("❌ Error fetching tags:", err);
+    console.error("Profile Error:", err);
     res.status(500).json({ 
-      success: false,
-      message: "Error fetching tags", 
+      message: "Error fetching profile", 
       error: err.message 
     });
   }
 });
 
-// ✅ FIXED: Fetch blog by ID with detailed validation
-app.get("/api/blogs/:id", async (req, res) => {
+// Update user profile
+app.put("/api/auth/profile", authenticateToken, async (req, res) => {
   try {
-    const blogId = req.params.id;
-    console.log(`🔍 Fetching blog with ID: ${blogId}`);
-
-    if (!blogId || blogId.length !== 24) {
-      console.log(`❌ Invalid Blog ID length: ${blogId?.length}/24 characters`);
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid Blog ID format - must be 24 characters", 
-        receivedId: blogId,
-        expectedLength: 24,
-        actualLength: blogId?.length || 0
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(blogId)) {
-      console.log(`❌ Invalid Blog ID format: ${blogId}`);
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid Blog ID format - not a valid MongoDB ObjectId",
-        receivedId: blogId
-      });
+    const { email } = req.body;
+    const user = await User.findById(req.user.id);
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
     }
     
-    const blog = await Blog.findById(blogId);
+    if (email) user.email = email;
+    await user.save();
     
-    if (!blog) {
-      console.log(`❌ Blog not found with ID: ${blogId}`);
-      return res.status(404).json({ 
-        success: false,
-        message: "Blog not found",
-        searchedId: blogId
-      });
-    }
-
-    console.log(`✅ Blog found: "${blog.title}" (${blog._id})`);
-    res.json({
-      success: true,
-      ...blog.toObject()
+    res.json({ 
+      message: "Profile updated successfully", 
+      user: user.profile 
     });
-    
   } catch (err) {
-    console.error(`❌ Error fetching blog ${req.params.id}:`, err);
-    
-    if (err.name === 'CastError') {
-      return res.status(400).json({ 
-        success: false,
-        message: "Invalid Blog ID format - MongoDB CastError",
-        error: err.message,
-        receivedId: req.params.id
-      });
-    }
-
+    console.error("Profile Update Error:", err);
     res.status(500).json({ 
-      success: false,
-      message: "Internal server error while fetching blog", 
-      error: err.message,
-      requestedId: req.params.id
+      message: "Error updating profile", 
+      error: err.message 
     });
   }
 });
 
+// ================ USER MANAGEMENT ENDPOINTS ================
+// Get all users (Admin/SuperAdmin only)
+app.get("/api/auth/users", authenticateToken, async (req, res) => {
+  try {
+    if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
+      return res.status(403).json({ 
+        message: "Access denied. Admin privileges required.",
+        requiredRole: ["admin", "superadmin"],
+        currentRole: req.user.role
+      });
+    }
+    
+    console.log(`Admin ${req.user.username} fetching all users`);
+    
+    const users = await User.find({}, { password: 0 }).sort({ createdAt: -1 });
+    
+    console.log(`Found ${users.length} users`);
+    res.json(users);
+    
+  } catch (err) {
+    console.error("Error fetching users:", err);
+    res.status(500).json({ 
+      message: "Error fetching users", 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+// Get specific user by ID (Admin/SuperAdmin only)
+app.get("/api/auth/users/:id", authenticateToken, async (req, res) => {
+  try {
+    if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
+      return res.status(403).json({ 
+        message: "Access denied. Admin privileges required." 
+      });
+    }
+    
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID format" });
+    }
+    
+    const user = await User.findById(id, { password: 0 });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    res.json(user);
+  } catch (err) {
+    console.error("Error fetching user:", err);
+    res.status(500).json({ 
+      message: "Error fetching user", 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+// Update user (Admin/SuperAdmin only)
+app.put("/api/auth/users/:id", authenticateToken, async (req, res) => {
+  try {
+    if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
+      return res.status(403).json({ 
+        message: "Access denied. Admin privileges required." 
+      });
+    }
+    
+    const { id } = req.params;
+    const { username, email, role, isActive } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID format" });
+    }
+    
+    const userToUpdate = await User.findById(id);
+    if (!userToUpdate) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    if (userToUpdate.username === 'admin' && username && username !== 'admin') {
+      return res.status(403).json({ 
+        message: "Cannot change main admin username" 
+      });
+    }
+    
+    if (role === 'superadmin' && req.user.role.toLowerCase() !== 'superadmin') {
+      return res.status(403).json({ 
+        message: "Only superadmin can promote users to superadmin role" 
+      });
+    }
+    
+    const updateData = {};
+    if (username) updateData.username = username;
+    if (email) updateData.email = email;
+    if (role) updateData.role = role;
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+    
+    const updatedUser = await User.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    ).select({ password: 0 });
+    
+    console.log(`User ${updatedUser.username} updated by ${req.user.username}`);
+    res.json({ 
+      message: "User updated successfully",
+      user: updatedUser
+    });
+  } catch (err) {
+    console.error("Error updating user:", err);
+    
+    if (err.code === 11000) {
+      return res.status(409).json({ 
+        message: "Username or email already exists" 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: "Error updating user", 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+// Delete user (Admin/SuperAdmin only)
+app.delete("/api/auth/users/:id", authenticateToken, async (req, res) => {
+  try {
+    if (!['admin', 'superadmin'].includes(req.user.role.toLowerCase())) {
+      return res.status(403).json({ 
+        message: "Access denied. Admin privileges required." 
+      });
+    }
+    
+    const { id } = req.params;
+    console.log(`Admin ${req.user.username} attempting to delete user: ${id}`);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID format" });
+    }
+    
+    const userToDelete = await User.findById(id);
+    if (!userToDelete) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    console.log(`Found user to delete: ${userToDelete.username}`);
+    
+    if (userToDelete.username === 'admin') {
+      return res.status(403).json({ 
+        message: "Cannot delete the main admin user" 
+      });
+    }
+    
+    if (userToDelete._id.toString() === req.user.id) {
+      return res.status(403).json({ 
+        message: "Cannot delete yourself" 
+      });
+    }
+    
+    if (userToDelete.role === 'superadmin' && req.user.role.toLowerCase() !== 'superadmin') {
+      return res.status(403).json({ 
+        message: "Only superadmin can delete other superadmins" 
+      });
+    }
+    
+    await User.findByIdAndDelete(id);
+    console.log(`User ${userToDelete.username} deleted successfully`);
+    
+    res.json({ 
+      message: `User "${userToDelete.username}" deleted successfully`,
+      deletedUser: {
+        id: userToDelete._id,
+        username: userToDelete.username,
+        role: userToDelete.role
+      }
+    });
+  } catch (err) {
+    console.error("Error deleting user:", err);
+    res.status(500).json({ 
+      message: "Error deleting user", 
+      error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error'
+    });
+  }
+});
+
+// ✅ General ping endpoint
+app.get("/api/ping", (req, res) => {
+  res.json({ 
+    message: "Server is running!", 
+    timestamp: new Date().toISOString(),
+    status: "healthy",
+    server: "Express Blog Backend"
+  });
+});
+
+// ✅ Wake/Ping Endpoint
+app.get("/api/blogs/ping", (req, res) => {
+  res.status(200).json({ message: "Server is awake!" });
+});
+
+// ✅ Test endpoint for banner image upload
+app.post("/api/test/banner-upload", uploadFields, (req, res) => {
+  console.log("Test upload - Files received:", req.files);
+  console.log("Test upload - Body:", req.body);
+  
+  res.json({
+    message: "Test upload successful",
+    files: req.files,
+    body: req.body
+  });
+});
+
+// ✅ Fetch all blogs WITH TAGS SUPPORT
 app.get("/api/blogs", async (req, res) => {
   try {
     const { category, subcategory, status, tags, limit, skip } = req.query;
@@ -848,6 +806,7 @@ app.get("/api/blogs", async (req, res) => {
     if (subcategory) query.subcategory = subcategory;
     if (status) query.status = status;
     
+    // 🆕 Add tag filtering support
     if (tags) {
       const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
       query.tags = { $in: tagArray };
@@ -871,6 +830,7 @@ app.get("/api/blogs", async (req, res) => {
   }
 });
 
+// ✅ Fetch blog by SLUG
 app.get("/api/blogs/slug/:slug", async (req, res) => {
   try {
     const blog = await Blog.findOne({ slug: req.params.slug });
@@ -881,24 +841,26 @@ app.get("/api/blogs/slug/:slug", async (req, res) => {
   }
 });
 
-// ✅ FIXED: Create blog with proper course handling
+// ✅ Fetch blog by ID
+app.get("/api/blogs/:id", async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid Blog ID format" });
+    }
+    
+    const blog = await Blog.findById(req.params.id);
+    if (!blog) return res.status(404).json({ message: "Blog not found" });
+    res.json(blog);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching blog", error: err.message });
+  }
+});
+
+// 🆕 UPDATED: Create a new blog WITH TAGS AND BANNER SUPPORT
 app.post(
   "/api/blogs",
   authenticateToken,
-  upload.fields([
-    { name: 'image', maxCount: 1 },
-    { name: 'bannerImage', maxCount: 1 },
-    { name: 'courseImage0', maxCount: 1 },
-    { name: 'courseImage1', maxCount: 1 },
-    { name: 'courseImage2', maxCount: 1 },
-    { name: 'courseImage3', maxCount: 1 },
-    { name: 'courseImage4', maxCount: 1 },
-    { name: 'courseImage5', maxCount: 1 },
-    { name: 'courseImage6', maxCount: 1 },
-    { name: 'courseImage7', maxCount: 1 },
-    { name: 'courseImage8', maxCount: 1 },
-    { name: 'courseImage9', maxCount: 1 }
-  ]),
+  uploadFields, // ✅ Changed from upload.single("image")
   async (req, res) => {
     try {
       const {
@@ -909,8 +871,7 @@ app.post(
         author,
         status,
         slug: providedSlug,
-        tags: tagsInput,
-        coursesData
+        tags: tagsInput
       } = req.body;
       
       console.log("📝 Creating blog with data:", {
@@ -921,8 +882,7 @@ app.post(
         status,
         slug: providedSlug,
         tags: tagsInput,
-        coursesData: coursesData ? 'Present' : 'Not present',
-        files: Object.keys(req.files || {})
+        files: req.files
       });
       
       let blogSlug;
@@ -933,7 +893,7 @@ app.post(
       }
       blogSlug = await findUniqueSlug(blogSlug, Blog);
       
-      // Handle Featured Image
+      // ✅ Handle Featured Image
       let imagePath = null;
       let imagePublicId = null;
       if (req.files && req.files.image && req.files.image[0]) {
@@ -943,7 +903,7 @@ app.post(
         console.log("📸 Featured image uploaded:", imagePath);
       }
       
-      // Handle Banner Image
+      // ✅ Handle Banner Image
       let bannerImagePath = null;
       let bannerImagePublicId = null;
       if (req.files && req.files.bannerImage && req.files.bannerImage[0]) {
@@ -953,63 +913,10 @@ app.post(
         console.log("🖼️ Banner image uploaded:", bannerImagePath);
       }
       
+      // 🆕 Process tags
       const processedTags = processTags(tagsInput);
       console.log("🏷️ Processed tags:", processedTags);
       
-      // ✅ FIXED: Better courses processing
-      let courses = [];
-      if (coursesData) {
-        try {
-          console.log("🎓 Processing courses data:", coursesData);
-          const parsedCourses = JSON.parse(coursesData);
-          
-          if (Array.isArray(parsedCourses)) {
-            for (let i = 0; i < parsedCourses.length; i++) {
-              const courseData = parsedCourses[i];
-              
-              // Skip empty courses
-              if (!courseData.heading && !courseData.description && !courseData.url) {
-                console.log(`Skipping empty course at index ${i}`);
-                continue;
-              }
-              
-              // Handle course image upload
-              const courseImageField = `courseImage${i}`;
-              let courseImagePath = null;
-              let courseImagePublicId = null;
-              
-              if (req.files && req.files[courseImageField] && req.files[courseImageField][0]) {
-                const courseImageFile = req.files[courseImageField][0];
-                courseImagePath = courseImageFile.path;
-                courseImagePublicId = courseImageFile.filename || getPublicIdFromUrl(courseImageFile.path);
-                console.log(`📸 Course ${i} image uploaded:`, courseImagePath);
-              }
-              
-              // Build course object with validation
-              const courseObj = {
-                heading: courseData.heading?.trim() || '',
-                description: courseData.description?.trim() || '',
-                url: courseData.url?.trim() || '',
-                image: courseImagePath,
-                imagePublicId: courseImagePublicId
-              };
-              
-              // Only add course if it has meaningful content
-              if (courseObj.heading || courseObj.description || courseObj.url) {
-                courses.push(courseObj);
-                console.log(`✅ Added course ${i}:`, courseObj.heading);
-              }
-            }
-          }
-        } catch (e) {
-          console.error('❌ Error parsing courses data:', e);
-          console.log('Raw coursesData:', coursesData);
-          courses = [];
-        }
-      }
-      
-      console.log(`🎓 Final courses count: ${courses.length}`);
-
       const newBlog = new Blog({
         title,
         slug: blogSlug,
@@ -1019,50 +926,29 @@ app.post(
         author,
         image: imagePath,
         imagePublicId,
-        bannerImage: bannerImagePath,
-        bannerImagePublicId,
+        bannerImage: bannerImagePath,        // ✅ New field
+        bannerImagePublicId,                 // ✅ New field
         status: status || "None",
-        tags: processedTags,
-        courses: courses
+        tags: processedTags
       });
       
       await newBlog.save();
-      console.log("✅ Blog created successfully with courses and images");
+      console.log("✅ Blog created successfully with images and tags");
       
       res.status(201).json({ 
         message: "Blog created successfully", 
-        blog: newBlog,
-        coursesAdded: courses.length
+        blog: newBlog 
       });
-      
     } catch (err) {
-      // Enhanced cleanup for failed blog creation
+      // ✅ Cleanup uploaded files if blog creation fails
       if (req.files) {
-        console.log("🧹 Cleaning up uploaded files due to error");
-        const cleanupPromises = [];
-        
-        // Cleanup main images
         if (req.files.image && req.files.image[0]) {
           const imagePublicId = req.files.image[0].filename || getPublicIdFromUrl(req.files.image[0].path);
-          cleanupPromises.push(deleteCloudinaryImage(imagePublicId));
+          await deleteCloudinaryImage(imagePublicId);
         }
         if (req.files.bannerImage && req.files.bannerImage[0]) {
           const bannerPublicId = req.files.bannerImage[0].filename || getPublicIdFromUrl(req.files.bannerImage[0].path);
-          cleanupPromises.push(deleteCloudinaryImage(bannerPublicId));
-        }
-        
-        // Cleanup course images
-        for (let i = 0; i < 10; i++) {
-          const courseImageField = `courseImage${i}`;
-          if (req.files[courseImageField] && req.files[courseImageField][0]) {
-            const courseImagePublicId = req.files[courseImageField][0].filename || getPublicIdFromUrl(req.files[courseImageField][0].path);
-            cleanupPromises.push(deleteCloudinaryImage(courseImagePublicId));
-          }
-        }
-        
-        if (cleanupPromises.length > 0) {
-          await Promise.allSettled(cleanupPromises);
-          console.log("🧹 Cleanup completed");
+          await deleteCloudinaryImage(bannerPublicId);
         }
       }
       
@@ -1072,82 +958,196 @@ app.post(
           error: err.message,
         });
       }
-      
-      console.error("❌ Error creating blog:", err);
-      res.status(500).json({ 
-        message: "Error creating blog", 
-        error: err.message,
-        details: process.env.NODE_ENV === 'development' ? err.stack : undefined
-      });
+      console.error("Error creating blog:", err);
+      res.status(500).json({ message: "Error creating blog", error: err.message });
     }
   }
 );
 
-// ✅ Blog Update and Delete endpoints (shortened for space)
-app.put("/api/blogs/:id", authenticateToken, upload.fields([
-  { name: 'image', maxCount: 1 },
-  { name: 'bannerImage', maxCount: 1 }
-]), async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ message: "Invalid Blog ID format" });
-    }
-    
-    const existingBlog = await Blog.findById(req.params.id);
-    if (!existingBlog)
-      return res.status(404).json({ message: "Blog not found" });
-    
-    let updatedData = { ...req.body };
-    
-    if (req.body.tags !== undefined) {
-      updatedData.tags = processTags(req.body.tags);
-    }
-    
-    if (updatedData.title || updatedData.slug) {
-      let baseSlug;
-      if (updatedData.slug) {
-        baseSlug = generateSlug(updatedData.slug);
-      } else {
-        baseSlug = generateSlug(updatedData.title || existingBlog.title);
+// 🆕 UPDATED: Update a blog WITH TAGS AND BANNER SUPPORT
+app.put(
+  "/api/blogs/:id",
+  authenticateToken,
+  uploadFields, // ✅ Changed from upload.single("image")
+  async (req, res) => {
+    try {
+      if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+        return res.status(400).json({ message: "Invalid Blog ID format" });
       }
       
-      if (baseSlug !== existingBlog.slug) {
-        const uniqueSlug = await findUniqueSlug(baseSlug, Blog, existingBlog._id);
-        updatedData.slug = uniqueSlug;
-      } else {
-        updatedData.slug = existingBlog.slug;
+      const existingBlog = await Blog.findById(req.params.id);
+      if (!existingBlog)
+        return res.status(404).json({ message: "Blog not found" });
+      
+      let updatedData = { ...req.body };
+      
+      // 🆕 Process tags if provided
+      if (req.body.tags !== undefined) {
+        updatedData.tags = processTags(req.body.tags);
+        console.log("🏷️ Updated tags:", updatedData.tags);
       }
+      
+      // Handle slug updates
+      if (updatedData.title || updatedData.slug) {
+        let baseSlug;
+        if (updatedData.slug) {
+          baseSlug = generateSlug(updatedData.slug);
+        } else {
+          baseSlug = generateSlug(updatedData.title || existingBlog.title);
+        }
+        
+        if (baseSlug !== existingBlog.slug) {
+          const uniqueSlug = await findUniqueSlug(
+            baseSlug,
+            Blog,
+            existingBlog._id
+          );
+          updatedData.slug = uniqueSlug;
+        } else {
+          updatedData.slug = existingBlog.slug;
+        }
+      }
+      
+      // ✅ Handle Featured Image Updates
+      if (req.files && req.files.image && req.files.image[0]) {
+        console.log("📸 Updating featured image");
+        // Delete old featured image
+        if (existingBlog.imagePublicId) {
+          await deleteCloudinaryImage(existingBlog.imagePublicId);
+        }
+        // Set new featured image
+        updatedData.image = req.files.image[0].path;
+        updatedData.imagePublicId = req.files.image[0].filename || getPublicIdFromUrl(req.files.image[0].path);
+      }
+      
+      // ✅ Handle Banner Image Updates
+      if (req.files && req.files.bannerImage && req.files.bannerImage[0]) {
+        console.log("🖼️ Updating banner image");
+        // Delete old banner image
+        if (existingBlog.bannerImagePublicId) {
+          await deleteCloudinaryImage(existingBlog.bannerImagePublicId);
+        }
+        // Set new banner image
+        updatedData.bannerImage = req.files.bannerImage[0].path;
+        updatedData.bannerImagePublicId = req.files.bannerImage[0].filename || getPublicIdFromUrl(req.files.bannerImage[0].path);
+      }
+      
+      const updatedBlog = await Blog.findByIdAndUpdate(
+        req.params.id,
+        updatedData,
+        { new: true, runValidators: true }
+      );
+      
+      console.log("✅ Blog updated successfully with images and tags");
+      res.json({ message: "Blog updated successfully", blog: updatedBlog });
+    } catch (err) {
+      if (err.code === 11000 && err.keyPattern && err.keyPattern.slug) {
+        return res.status(409).json({
+          message: "A blog with a similar title/slug already exists. Please choose a unique title or provide a custom slug.",
+          error: err.message,
+        });
+      }
+      console.error("Error updating blog:", err);
+      res.status(500).json({ message: "Error updating blog", error: err.message });
+    }
+  }
+);
+
+// ✅ Get current user's blog posts only
+app.get("/api/blogs/my-posts", authenticateToken, async (req, res) => {
+  try {
+    const { category, subcategory, status, tags, limit, skip } = req.query;
+    
+    console.log(`Fetching posts for user: ${req.user.username} (ID: ${req.user.id})`);
+    
+    // Build query for current user's posts only
+    let query = { 
+      $or: [
+        { author: req.user.username },
+        { authorId: req.user.id },
+        { createdBy: req.user.id },
+        { userId: req.user.id }
+      ]
+    };
+    
+    if (category) query.category = category;
+    if (subcategory) query.subcategory = subcategory;
+    if (status) query.status = status;
+    
+    // 🆕 Add tag filtering for user posts
+    if (tags) {
+      const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
+      query.tags = { $in: tagArray };
     }
     
-    if (req.files && req.files.image && req.files.image[0]) {
-      if (existingBlog.imagePublicId) {
-        await deleteCloudinaryImage(existingBlog.imagePublicId);
-      }
-      updatedData.image = req.files.image[0].path;
-      updatedData.imagePublicId = req.files.image[0].filename || getPublicIdFromUrl(req.files.image[0].path);
-    }
+    const parsedLimit = parseInt(limit) || 50;
+    const parsedSkip = parseInt(skip) || 0;
     
-    if (req.files && req.files.bannerImage && req.files.bannerImage[0]) {
-      if (existingBlog.bannerImagePublicId) {
-        await deleteCloudinaryImage(existingBlog.bannerImagePublicId);
-      }
-      updatedData.bannerImage = req.files.bannerImage[0].path;
-      updatedData.bannerImagePublicId = req.files.bannerImage[0].filename || getPublicIdFromUrl(req.files.bannerImage[0].path);
-    }
+    const blogs = await Blog.find(query)
+      .sort({ createdAt: -1 })
+      .skip(parsedSkip)
+      .limit(parsedLimit);
     
-    const updatedBlog = await Blog.findByIdAndUpdate(
-      req.params.id,
-      updatedData,
-      { new: true, runValidators: true }
-    );
+    console.log(`✅ Found ${blogs.length} posts for user ${req.user.username}`);
     
-    res.json({ message: "Blog updated successfully", blog: updatedBlog });
+    res.json({ 
+      blogs, 
+      total: blogs.length,
+      author: req.user.username 
+    });
+    
   } catch (err) {
-    console.error("Error updating blog:", err);
-    res.status(500).json({ message: "Error updating blog", error: err.message });
+    console.error("Error fetching user blogs:", err);
+    res.status(500).json({ message: "Error fetching user blogs", error: err.message });
   }
 });
 
+// 🆕 NEW: Get all unique tags from all blogs
+app.get("/api/blogs/tags", async (req, res) => {
+  try {
+    const tags = await Blog.distinct("tags");
+    const sortedTags = tags.sort();
+    
+    res.json({ 
+      tags: sortedTags,
+      count: sortedTags.length
+    });
+  } catch (err) {
+    console.error("Error fetching tags:", err);
+    res.status(500).json({ message: "Error fetching tags", error: err.message });
+  }
+});
+
+// 🆕 NEW: Search blogs by tags
+app.get("/api/blogs/search/tags", async (req, res) => {
+  try {
+    const { tags, limit, skip } = req.query;
+    
+    if (!tags) {
+      return res.status(400).json({ message: "Tags parameter is required" });
+    }
+    
+    const tagArray = Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim());
+    const parsedLimit = parseInt(limit) || 10;
+    const parsedSkip = parseInt(skip) || 0;
+    
+    const blogs = await Blog.find({ tags: { $in: tagArray } })
+      .sort({ createdAt: -1 })
+      .skip(parsedSkip)
+      .limit(parsedLimit);
+    
+    res.json({ 
+      blogs,
+      searchedTags: tagArray,
+      count: blogs.length
+    });
+  } catch (err) {
+    console.error("Error searching blogs by tags:", err);
+    res.status(500).json({ message: "Error searching blogs", error: err.message });
+  }
+});
+
+// ✅ Delete a blog WITH BANNER IMAGE CLEANUP
 app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -1158,30 +1158,26 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
     if (!blogToDelete)
       return res.status(404).json({ message: "Blog not found" });
     
+    // ✅ Delete both featured image and banner image
     const deletePromises = [];
     
     if (blogToDelete.imagePublicId) {
+      console.log("🗑️ Deleting featured image:", blogToDelete.imagePublicId);
       deletePromises.push(deleteCloudinaryImage(blogToDelete.imagePublicId));
     }
     
     if (blogToDelete.bannerImagePublicId) {
+      console.log("🗑️ Deleting banner image:", blogToDelete.bannerImagePublicId);
       deletePromises.push(deleteCloudinaryImage(blogToDelete.bannerImagePublicId));
     }
     
-    // Delete course images
-    if (blogToDelete.courses && blogToDelete.courses.length > 0) {
-      blogToDelete.courses.forEach(course => {
-        if (course.imagePublicId) {
-          deletePromises.push(deleteCloudinaryImage(course.imagePublicId));
-        }
-      });
-    }
-    
+    // Delete images in parallel
     if (deletePromises.length > 0) {
       await Promise.all(deletePromises);
     }
     
     await Blog.findByIdAndDelete(req.params.id);
+    console.log("✅ Blog and associated images deleted successfully");
     
     res.json({ message: "Blog and associated images deleted successfully" });
   } catch (err) {
@@ -1190,111 +1186,6 @@ app.delete("/api/blogs/:id", authenticateToken, async (req, res) => {
   }
 });
 
-// ================ COURSE MANAGEMENT ENDPOINTS ================
-
-app.get("/api/courses", async (req, res) => {
-  try {
-    const { category, limit, skip, createdBy } = req.query;
-    let query = { isActive: true };
-    
-    if (category) query.category = category;
-    if (createdBy) query.createdBy = createdBy;
-    
-    const parsedLimit = parseInt(limit) || 50;
-    const parsedSkip = parseInt(skip) || 0;
-    
-    const courses = await Course.find(query)
-      .sort({ priority: -1, createdAt: -1 })
-      .skip(parsedSkip)
-      .limit(parsedLimit + 1)
-      .populate('createdBy', 'username');
-    
-    const hasMore = courses.length > parsedLimit;
-    const coursesToSend = hasMore ? courses.slice(0, parsedLimit) : courses;
-    
-    res.json({ 
-      success: true,
-      courses: coursesToSend, 
-      hasMore,
-      total: coursesToSend.length
-    });
-  } catch (err) {
-    console.error("Error fetching courses:", err);
-    res.status(500).json({ 
-      success: false,
-      message: "Error fetching courses", 
-      error: err.message 
-    });
-  }
-});
-
-app.post("/api/courses", authenticateToken, upload.single('image'), async (req, res) => {
-  try {
-    const { heading, description, url, category, priority } = req.body;
-    
-    if (!heading || !description || !url) {
-      return res.status(400).json({
-        success: false,
-        message: 'Heading, description, and URL are required'
-      });
-    }
-
-    let imagePath = null;
-    let imagePublicId = null;
-    if (req.file) {
-      imagePath = req.file.path;
-      imagePublicId = req.file.filename || getPublicIdFromUrl(imagePath);
-    }
-
-    const courseData = {
-      heading: heading.trim(),
-      description: description.trim(),
-      url: url.trim(),
-      category: category?.trim() || 'General',
-      priority: parseInt(priority) || 0,
-      image: imagePath,
-      imagePublicId,
-      createdBy: req.user.id,
-      authorName: req.user.username
-    };
-
-    const course = new Course(courseData);
-    await course.save();
-    await course.populate('createdBy', 'username');
-    
-    res.status(201).json({
-      success: true,
-      message: 'Course created successfully',
-      course
-    });
-  } catch (error) {
-    if (req.file) {
-      const imagePublicId = req.file.filename || getPublicIdFromUrl(req.file.path);
-      await deleteCloudinaryImage(imagePublicId);
-    }
-    
-    console.error('Error creating course:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create course',
-      error: error.message
-    });
-  }
-});
-
-// Add other course endpoints (PUT, DELETE, GET by ID)...
-
-// ================ GENERAL ENDPOINTS ================
-
-app.get("/api/ping", (req, res) => {
-  res.json({ 
-    message: "Server is running!", 
-    timestamp: new Date().toISOString(),
-    status: "healthy",
-    server: "Express Blog Backend"
-  });
-});
-
-// ✅ Start the server
+// ✅ Start the blog server
 const PORT = process.env.BLOG_PORT || 5002;
 app.listen(PORT, () => console.log(`🚀 Blog server running on port ${PORT}`));
